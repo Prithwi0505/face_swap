@@ -18,13 +18,15 @@ echo "=== Step 4: Removing jax/jaxlib (conflict prevention) ==="
 pip uninstall -y jax jaxlib 2>/dev/null || true
 
 echo "=== Step 5: Fixing basicsr + torchvision compatibility ==="
-# basicsr uses a deprecated import that was removed in newer torchvision
-DEGRADATIONS_FILE=$(python3 -c "import basicsr; import os; print(os.path.join(os.path.dirname(basicsr.__file__), 'data', 'degradations.py'))")
+# Find basicsr path without importing it (since importing crashes)
+BASICSR_PATH=$(pip show basicsr | grep Location | awk '{print $2}')/basicsr
+DEGRADATIONS_FILE="$BASICSR_PATH/data/degradations.py"
+
 if [ -f "$DEGRADATIONS_FILE" ]; then
     sed -i 's/from torchvision.transforms.functional_tensor import rgb_to_grayscale/from torchvision.transforms.functional import rgb_to_grayscale/' "$DEGRADATIONS_FILE"
     echo "  Patched: $DEGRADATIONS_FILE"
 else
-    echo "  WARNING: Could not find degradations.py to patch"
+    echo "  WARNING: Could not find degradations.py to patch at $DEGRADATIONS_FILE"
 fi
 
 echo ""
