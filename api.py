@@ -15,6 +15,11 @@ import warnings
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import List
+import cv2
+
+# Patch OpenCV to prevent headless crashes from underlying libraries closing windows
+cv2.destroyAllWindows = lambda *args, **kwargs: None
+cv2.imshow = lambda *args, **kwargs: None
 
 # Performance: single thread doubles CUDA performance
 os.environ['OMP_NUM_THREADS'] = '1'
