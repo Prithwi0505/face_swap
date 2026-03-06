@@ -17,6 +17,16 @@ pip install opennsfw2 keras --upgrade
 echo "=== Step 4: Removing jax/jaxlib (conflict prevention) ==="
 pip uninstall -y jax jaxlib 2>/dev/null || true
 
+echo "=== Step 5: Fixing basicsr + torchvision compatibility ==="
+# basicsr uses a deprecated import that was removed in newer torchvision
+DEGRADATIONS_FILE=$(python3 -c "import basicsr; import os; print(os.path.join(os.path.dirname(basicsr.__file__), 'data', 'degradations.py'))")
+if [ -f "$DEGRADATIONS_FILE" ]; then
+    sed -i 's/from torchvision.transforms.functional_tensor import rgb_to_grayscale/from torchvision.transforms.functional import rgb_to_grayscale/' "$DEGRADATIONS_FILE"
+    echo "  Patched: $DEGRADATIONS_FILE"
+else
+    echo "  WARNING: Could not find degradations.py to patch"
+fi
+
 echo ""
 echo "============================================"
 echo "  SETUP COMPLETE!"
