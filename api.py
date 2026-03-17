@@ -39,7 +39,7 @@ from roop.core import (
     limit_resources,
     update_status,
 )
-from roop.predictor import predict_video
+from roop.predictor import predict_video, predict_image
 from roop.processors.frame.core import get_frame_processors_modules
 from roop.utilities import (
     has_image_extension,
@@ -110,6 +110,47 @@ def _preload_models() -> None:
     for module in modules:
         module.pre_check()  # downloads weights if not present
     print("[API] Models pre-checked and ready.")
+
+
+# ---------------------------------------------------------------------------
+# Core face-swap pipeline (Images)
+# ---------------------------------------------------------------------------
+def run_face_swap_image_pipeline(source_path: str, target_path: str, output_path: str) -> str:
+    """
+    Execute the face-swap pipeline in-process for images.
+    Returns the path to the output image on success, raises on failure.
+    """
+    roop.globals.source_path = source_path
+    roop.globals.target_path = target_path
+    roop.globals.output_path = output_path
+
+    # Validate processors can start
+    frame_processor_modules = get_frame_processors_modules(roop.globals.frame_processors)
+    for processor in frame_processor_modules:
+        if not processor.pre_start():
+            raise RuntimeError(f"Processor {getattr(processor, 'NAME', 'unknown')} pre_start failed. "
+                               "Check that the source image contains a detectable face.")
+
+    # NSFW check on target image
+    if is_image(target_path):
+        if predict_image(target_path):
+            raise ValueError("NSFW content detected in the target image. Processing refused.")
+    else:
+        raise ValueError("Target file is not a valid image.")
+
+    shutil.copy2(target_path, output_path)
+
+    # Process frame
+    for processor in frame_processor_modules:
+        update_status(f'Processing...', getattr(processor, 'NAME', 'PROCESSOR'))
+        processor.process_image(source_path, output_path, output_path)
+        processor.post_process()
+
+    if not is_image(output_path):
+        raise RuntimeError("Processing to image failed!")
+
+    update_status('Processing complete!')
+    return output_path
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +266,84 @@ async def health():
         "execution_providers": roop.globals.execution_providers,
         "frame_processors": roop.globals.frame_processors,
     }
+
+
+@app.post("/swap-face-image")
+async def swap_face_image(
+    source_image: UploadFile = File(..., description="Source face image (jpg/png)"),
+    target_image: UploadFile = File(..., description="Target image (jpg/png)"),
+    frame_processors: List[str] = Query(
+        default=["face_swapper", "face_enhancer"],
+        description="Frame processors to apply. Options: face_swapper, face_enhancer",
+    ),
+    many_faces: bool = Query(default=False, description="Swap all faces in the image"),
+):
+    """
+    Perform face swapping on an image.
+
+    Upload a **source face image** and a **target image**.
+    The face in the target image will be replaced with the face from the source image.
+    Returns the processed image file.
+    """
+    request_id = str(uuid.uuid4())[:8]
+    source_filename = f"{request_id}_source_{source_image.filename}"
+    target_filename = f"{request_id}_target_{target_image.filename}"
+
+    source_path = str(UPLOAD_DIR / source_filename)
+    target_path = str(UPLOAD_DIR / target_filename)
+
+    target_name, target_ext = os.path.splitext(target_image.filename)
+    output_filename = f"{request_id}_result{target_ext or '.jpg'}"
+    output_path = str(OUTPUT_DIR / output_filename)
+
+    try:
+        with open(source_path, "wb") as f:
+            shutil.copyfileobj(source_image.file, f)
+        with open(target_path, "wb") as f:
+            shutil.copyfileobj(target_image.file, f)
+
+        if not is_image(source_path):
+            raise HTTPException(status_code=400, detail="Source file is not a valid image. Use jpg/png.")
+        if not is_image(target_path):
+            raise HTTPException(status_code=400, detail="Target file is not a valid image. Use jpg/png.")
+
+        roop.globals.frame_processors = frame_processors
+        roop.globals.many_faces = many_faces
+        # Safe defaults
+        roop.globals.keep_fps = True
+        roop.globals.skip_audio = False
+
+        from roop.processors.frame.core import FRAME_PROCESSORS_MODULES
+        import roop.processors.frame.core as proc_core
+        proc_core.FRAME_PROCESSORS_MODULES = []
+
+        from roop.face_reference import clear_face_reference
+        clear_face_reference()
+
+        result_path = run_face_swap_image_pipeline(source_path, target_path, output_path)
+
+        media_type = "image/png" if output_filename.lower().endswith(".png") else "image/jpeg"
+        return FileResponse(
+            path=result_path,
+            filename=f"swapped_{target_image.filename}",
+            media_type=media_type,
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+    finally:
+        for path in [source_path, target_path]:
+            if os.path.isfile(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
 
 @app.post("/swap-face")
