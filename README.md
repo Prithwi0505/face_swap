@@ -46,13 +46,38 @@ print(f"✅ FACE SWAP API IS ONLINE: {public_url}")
 
 ## Testing the API Locally
 
-Once your Colab prints the `✅ FACE SWAP API IS ONLINE` URL, you can send requests to it from your local computer's terminal:
+Once your Colab prints the `✅ FACE SWAP API IS ONLINE` URL, you can send requests to it from your local computer's terminal. 
+*Note for Windows users: If you are using PowerShell, you must type `curl.exe` instead of `curl` and put the command on a single line!*
 
+### 1. Swap Face in Video
+To swap a face in a target video using a source face image:
+
+**Mac/Linux:**
 ```bash
 curl -X POST "https://YOUR_NGROK_URL.ngrok-free.app/swap-face" \
-  -F "source_image=@my_face.jpg" \
+  -F "source_image=@my_source_face.jpg" \
   -F "target_video=@cool_video.mp4" \
   --output my_new_video.mp4
 ```
 
-*Note: Depending on the length of the video, processing may take a minute or two. The `result.mp4` will be saved in the directory where you ran the curl command.*
+**Windows (PowerShell):**
+```powershell
+curl.exe -X POST "https://YOUR_NGROK_URL.ngrok-free.app/swap-face" -F "source_image=@my_source_face.jpg" -F "target_video=@cool_video.mp4" --output my_new_video.mp4
+```
+*Depending on the length of the video, processing may take a minute or two. The `my_new_video.mp4` will be saved in the directory where you ran the command.*
+
+### 2. Swap Face in Image (Image-to-Image)
+To swap a face in a target image using a source face image:
+
+**Mac/Linux:**
+```bash
+curl -X POST "https://YOUR_NGROK_URL.ngrok-free.app/swap-face-image" \
+  -F "source_image=@my_source_face.jpg" \
+  -F "target_image=@target_person.jpg" \
+  --output my_swapped_face.jpg
+```
+
+**Windows (PowerShell):**
+```powershell
+curl.exe -X POST "https://YOUR_NGROK_URL.ngrok-free.app/swap-face-image" -F "source_image=@my_source_face.jpg" -F "target_image=@target_person.jpg" --output my_swapped_face.jpg
+```
