@@ -41,16 +41,28 @@ time.sleep(15)
 !sudo apt-get update || true
 !sudo apt-get install -y ngrok
 
-!pip install pyngrok -q
-from pyngrok import ngrok, conf
+# Lock pyngrok explicitly to the exact installation path we found ngrok in
+# Actually, let's just bypass the bug-ridden `pyngrok` Python library completely.
+# We will use the native `ngrok` binary directly.
+import threading
+import time
+import subprocess
+import requests
 
-# Lock pyngrok expressly to the official apt install path
-pyngrok_config = conf.PyngrokConfig(ngrok_path="/usr/bin/ngrok")
+# Kill any lingering ngrok tunnels
+!pkill -f ngrok
 
-ngrok.set_auth_token("YOUR_NGROK_AUTH_TOKEN", pyngrok_config=pyngrok_config)
-public_url = ngrok.connect(7860, pyngrok_config=pyngrok_config)
+# Start the native ngrok tunnel as a background job
+subprocess.Popen(["ngrok", "http", "--authtoken", "YOUR_NGROK_AUTH_TOKEN", "7860"])
+time.sleep(4)
 
-print(f"✅ FACE SWAP API IS ONLINE: {public_url}")
+# Query ngrok's local management API to get the public URL
+try:
+    res = requests.get("http://localhost:4040/api/tunnels")
+    public_url = res.json()["tunnels"][0]["public_url"]
+    print(f"✅ FACE SWAP API IS ONLINE: {public_url}")
+except Exception as e:
+    print(f"❌ Failed to get Ngrok URL (check if your auth token is correct): {e}")
 ```
 
 ---
