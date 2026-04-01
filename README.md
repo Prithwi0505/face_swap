@@ -24,7 +24,7 @@ After the setup script finishes, you **must** restart the Python environment to 
 Run this in a new cell. *(Make sure to replace `YOUR_NGROK_AUTH_TOKEN` with your actual token from the [ngrok dashboard](https://dashboard.ngrok.com/get-started/your-authtoken)).*
 
 ```python
-%cd /content/AigetaiModelsBackend/face_swapping/fastApi_version
+%cd /content/face_swap
 
 # 1. Start the FastAPI server in the background
 !nohup uvicorn api:app --host 0.0.0.0 --port 7860 > /content/fastapi.log 2>&1 &
