@@ -1,0 +1,17 @@
+.idea/
+.vscode/
+models/
+temp/
+__pycache__/
+temp_opennsfw2/
+.venv/
+venv/
+env/
+*.mp4
+*.jpg
+*.jpeg
+*.png
+.env
+fastapi.log
+.DS_Store
+*.log

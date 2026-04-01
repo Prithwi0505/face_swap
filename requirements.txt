@@ -1,0 +1,19 @@
+torch>=2.2.0
+opencv-python
+onnx
+insightface==0.7.3
+psutil
+pillow
+onnxruntime-gpu>=1.20.0; sys_platform != 'darwin'
+onnxruntime>=1.20.0; sys_platform == 'darwin' and platform_machine != 'arm64'
+onnxruntime-silicon; sys_platform == 'darwin' and platform_machine == 'arm64'
+tensorflow
+protobuf
+tqdm
+gfpgan
+opennsfw2
+keras
+fastapi
+uvicorn[standard]
+python-multipart
+numpy
