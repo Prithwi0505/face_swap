@@ -34,16 +34,18 @@ import time
 time.sleep(15)
 
 # 2. Start the secure Ngrok tunnel
-# Download ngrok perfectly explicitly to circumvent `apt` PPA broken signatures in Colab
-!wget -q -O ngrok.tgz https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
-!tar -xf ngrok.tgz
-!chmod +x ngrok
+# 2. Start the secure Ngrok tunnel
+# Install ngrok via official apt, ignoring any errors from broken third-party Colab PPAs
+!curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+!echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+!sudo apt-get update || true
+!sudo apt-get install -y ngrok
 
 !pip install pyngrok -q
 from pyngrok import ngrok, conf
 
-# Lock pyngrok explicitly directly to our freshly extracted binary
-pyngrok_config = conf.PyngrokConfig(ngrok_path="/content/ngrok")
+# Lock pyngrok expressly to the official apt install path
+pyngrok_config = conf.PyngrokConfig(ngrok_path="/usr/bin/ngrok")
 
 ngrok.set_auth_token("YOUR_NGROK_AUTH_TOKEN", pyngrok_config=pyngrok_config)
 public_url = ngrok.connect(7860, pyngrok_config=pyngrok_config)
