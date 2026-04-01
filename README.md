@@ -44,16 +44,15 @@ time.sleep(15)
 # Lock pyngrok explicitly to the exact installation path we found ngrok in
 # Actually, let's just bypass the bug-ridden `pyngrok` Python library completely.
 # We will use the native `ngrok` binary directly.
-import threading
 import time
-import subprocess
 import requests
 
 # Kill any lingering ngrok tunnels
 !pkill -f ngrok
 
 # Start the native ngrok tunnel as a background job
-subprocess.Popen(["ngrok", "http", "--authtoken", "YOUR_NGROK_AUTH_TOKEN", "7860"])
+# We explicitly use --log=stdout to prevent the binary from instantly crashing while attempting to paint its TUI in a headless environment
+!nohup ngrok http --authtoken YOUR_NGROK_AUTH_TOKEN --log=stdout 7860 > /content/ngrok.log 2>&1 &
 time.sleep(4)
 
 # Query ngrok's local management API to get the public URL
