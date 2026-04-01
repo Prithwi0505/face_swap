@@ -35,17 +35,16 @@ time.sleep(15)
 
 # 2. Start the secure Ngrok tunnel
 # Install ngrok via apt to prevent pyngrok download 403 errors
+!rm -f /usr/local/bin/ngrok
 !curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
 !echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
 !sudo apt-get update -qq && sudo apt-get install -y -qq ngrok
 
 !pip install pyngrok -q
-import shutil
 from pyngrok import ngrok, conf
 
 # Define the explicit path so pyngrok doesn't try to download it
-ngrok_path = shutil.which("ngrok")
-pyngrok_config = conf.PyngrokConfig(ngrok_path=ngrok_path)
+pyngrok_config = conf.PyngrokConfig(ngrok_path="/usr/bin/ngrok")
 
 ngrok.set_auth_token("YOUR_NGROK_AUTH_TOKEN", pyngrok_config=pyngrok_config)
 public_url = ngrok.connect(7860, pyngrok_config=pyngrok_config)
