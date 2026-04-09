@@ -308,6 +308,45 @@ async def list_requests():
     return JSONResponse(content={"total": len(records), "requests": records})
 
 
+@app.get("/download/{request_id}")
+async def download_result(request_id: str):
+    """
+    Download the output file (image or video) for a completed face-swap request.
+
+    Use the `request_id` returned by `/swap-face` or `/swap-face-image` to fetch
+    the processed file. The file is served as-is from the outputs directory.
+    """
+    record = get_request(request_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Request ID '{request_id}' not found.")
+    if record["status"] != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Request is not completed yet. Current status: '{record['status']}'"
+        )
+
+    # Find the output file — it is named {short_id}_result.*
+    short_id = request_id[:8]
+    matches = list(OUTPUT_DIR.glob(f"{short_id}_result.*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="Output file not found on server.")
+
+    result_path = str(matches[0])
+    ext = matches[0].suffix.lower()
+
+    if ext in (".mp4", ".mov", ".avi", ".mkv"):
+        media_type = "video/mp4"
+        filename = f"swapped_REQ-{short_id}{ext}"
+    elif ext == ".png":
+        media_type = "image/png"
+        filename = f"swapped_REQ-{short_id}.png"
+    else:
+        media_type = "image/jpeg"
+        filename = f"swapped_REQ-{short_id}.jpg"
+
+    return FileResponse(path=result_path, filename=filename, media_type=media_type)
+
+
 @app.post("/swap-face-image")
 async def swap_face_image(
     source_image: UploadFile = File(..., description="Source face image (jpg/png)"),
@@ -323,7 +362,7 @@ async def swap_face_image(
 
     Upload a **source face image** and a **target image**.
     The face in the target image will be replaced with the face from the source image.
-    Returns the processed image file.
+    Returns a JSON record with request metadata and a download URL for the result.
     """
     request_id = str(uuid.uuid4())
     short_id = request_id[:8]
@@ -378,21 +417,12 @@ async def swap_face_image(
 
         db_record = get_request(request_id)
 
-        media_type = "image/png" if output_filename.lower().endswith(".png") else "image/jpeg"
-        download_name = f"swapped_REQ-{short_id}_{target_image.filename}"
-        response = FileResponse(
-            path=result_path,
-            filename=download_name,
-            media_type=media_type,
-        )
-        # Surface DB record in response headers so callers can inspect without
-        # a separate API call.  All values are strings in HTTP headers.
-        response.headers["X-Request-ID"]   = db_record["request_id"]
-        response.headers["X-Status"]        = db_record["status"]
-        response.headers["X-Time-Taken"]    = str(db_record["timestamp"]) + "s"
-        response.headers["X-Request-Type"]  = db_record["request_type"]
-        response.headers["X-Created-At"]    = db_record["created_at"]
-        return response
+        # Return JSON with DB record + a download URL for the result file
+        return JSONResponse(content={
+            **db_record,
+            "download_url": f"/download/{request_id}",
+            "message": "Face swap completed. Use the download_url to fetch your result file.",
+        })
 
     except HTTPException:
         elapsed = time.monotonic() - start_time
@@ -437,7 +467,7 @@ async def swap_face(
 
     Upload a **source face image** and a **target video** (1-2 seconds).
     The face in the video will be replaced with the face from the image.
-    Returns the processed video file.
+    Returns a JSON record with request metadata and a download URL for the result.
     """
     # Generate unique ID for this request to avoid file collisions
     request_id = str(uuid.uuid4())
@@ -500,20 +530,12 @@ async def swap_face(
 
         db_record = get_request(request_id)
 
-        # --- Return the result video ---
-        download_name = f"swapped_REQ-{short_id}_{target_video.filename}"
-        response = FileResponse(
-            path=result_path,
-            filename=download_name,
-            media_type="video/mp4",
-        )
-        # Surface DB record in response headers
-        response.headers["X-Request-ID"]   = db_record["request_id"]
-        response.headers["X-Status"]        = db_record["status"]
-        response.headers["X-Time-Taken"]    = str(db_record["timestamp"]) + "s"
-        response.headers["X-Request-Type"]  = db_record["request_type"]
-        response.headers["X-Created-At"]    = db_record["created_at"]
-        return response
+        # Return JSON with DB record + a download URL for the result file
+        return JSONResponse(content={
+            **db_record,
+            "download_url": f"/download/{request_id}",
+            "message": "Face swap completed. Use the download_url to fetch your result file.",
+        })
 
     except HTTPException:
         elapsed = time.monotonic() - start_time
