@@ -9,12 +9,23 @@ Usage (Colab):
 
 import os
 import sys
+import time
 import uuid
 import shutil
 import warnings
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import List
+
+from database import (
+    init_db,
+    create_request,
+    mark_in_progress,
+    mark_completed,
+    mark_failed,
+    get_request,
+    get_all_requests,
+)
 import cv2
 
 # Patch OpenCV to prevent headless crashes from underlying libraries closing windows
@@ -64,18 +75,11 @@ warnings.filterwarnings('ignore', category=UserWarning, module='torchvision')
 # ---------------------------------------------------------------------------
 UPLOAD_DIR = Path("uploads")
 OUTPUT_DIR = Path("outputs")
-REQUEST_LOG_FILE = Path("request_ids.txt")
 
 
 def _ensure_dirs() -> None:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def log_request_id(req_id: str) -> None:
-    """Appends the unique request ID to a file."""
-    with open(REQUEST_LOG_FILE, "a") as f:
-        f.write(f"{req_id}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -243,9 +247,10 @@ def run_face_swap_pipeline(source_path: str, target_path: str, output_path: str)
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: configure globals, create dirs, pre-load models."""
+    """Startup: configure globals, create dirs, init DB, pre-load models."""
     _configure_globals()
     _ensure_dirs()
+    init_db()          # <-- initialise SQLite on startup
     limit_resources()
     _preload_models()
     print("[API] Face-swap API is ready.")
@@ -275,6 +280,34 @@ async def health():
     }
 
 
+@app.get("/request/{request_id}")
+async def get_request_status(request_id: str):
+    """
+    Fetch the stored record for a specific request ID.
+
+    Returns:
+        - **request_id**: UUID of the request
+        - **status**: `not_completed` | `in_progress` | `completed` | `failed`
+        - **timestamp**: seconds taken to process (null until completed/failed)
+        - **request_type**: `image` or `video`
+        - **created_at**: ISO-8601 UTC time the request arrived
+    """
+    record = get_request(request_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Request ID '{request_id}' not found.")
+    return JSONResponse(content=record)
+
+
+@app.get("/requests")
+async def list_requests():
+    """
+    List all face-swap requests ever made, newest first.
+    Useful for auditing or monitoring batch jobs.
+    """
+    records = get_all_requests()
+    return JSONResponse(content={"total": len(records), "requests": records})
+
+
 @app.post("/swap-face-image")
 async def swap_face_image(
     source_image: UploadFile = File(..., description="Source face image (jpg/png)"),
@@ -293,7 +326,6 @@ async def swap_face_image(
     Returns the processed image file.
     """
     request_id = str(uuid.uuid4())
-    log_request_id(request_id)
     short_id = request_id[:8]
     source_filename = f"{short_id}_source_{source_image.filename}"
     target_filename = f"{short_id}_target_{target_image.filename}"
@@ -306,6 +338,10 @@ async def swap_face_image(
     output_path = str(OUTPUT_DIR / output_filename)
 
     print(f"[API] swap-face-image request_id={request_id}")
+
+    # --- DB: record arrival ---
+    create_request(request_id, request_type="image")
+    start_time = time.monotonic()
 
     try:
         with open(source_path, "wb") as f:
@@ -331,7 +367,16 @@ async def swap_face_image(
         from roop.face_reference import clear_face_reference
         clear_face_reference()
 
+        # --- DB: mark in_progress before heavy work ---
+        mark_in_progress(request_id)
+
         result_path = run_face_swap_image_pipeline(source_path, target_path, output_path)
+
+        elapsed = time.monotonic() - start_time
+        # --- DB: mark completed with elapsed time ---
+        mark_completed(request_id, elapsed)
+
+        db_record = get_request(request_id)
 
         media_type = "image/png" if output_filename.lower().endswith(".png") else "image/jpeg"
         download_name = f"swapped_REQ-{short_id}_{target_image.filename}"
@@ -340,16 +385,30 @@ async def swap_face_image(
             filename=download_name,
             media_type=media_type,
         )
-        response.headers["X-Request-ID"] = request_id
+        # Surface DB record in response headers so callers can inspect without
+        # a separate API call.  All values are strings in HTTP headers.
+        response.headers["X-Request-ID"]   = db_record["request_id"]
+        response.headers["X-Status"]        = db_record["status"]
+        response.headers["X-Time-Taken"]    = str(db_record["timestamp"]) + "s"
+        response.headers["X-Request-Type"]  = db_record["request_type"]
+        response.headers["X-Created-At"]    = db_record["created_at"]
         return response
 
     except HTTPException:
+        elapsed = time.monotonic() - start_time
+        mark_failed(request_id, elapsed)
         raise
     except ValueError as e:
+        elapsed = time.monotonic() - start_time
+        mark_failed(request_id, elapsed)
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
+        elapsed = time.monotonic() - start_time
+        mark_failed(request_id, elapsed)
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
+        elapsed = time.monotonic() - start_time
+        mark_failed(request_id, elapsed)
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
     finally:
         for path in [source_path, target_path]:
@@ -382,7 +441,6 @@ async def swap_face(
     """
     # Generate unique ID for this request to avoid file collisions
     request_id = str(uuid.uuid4())
-    log_request_id(request_id)
     short_id = request_id[:8]
     source_filename = f"{short_id}_source_{source_image.filename}"
     target_filename = f"{short_id}_target_{target_video.filename}"
@@ -396,6 +454,10 @@ async def swap_face(
     output_path = str(OUTPUT_DIR / output_filename)
 
     print(f"[API] swap-face request_id={request_id}")
+
+    # --- DB: record arrival ---
+    create_request(request_id, request_type="video")
+    start_time = time.monotonic()
 
     try:
         # --- Save uploaded files ---
@@ -426,8 +488,17 @@ async def swap_face(
         from roop.face_reference import clear_face_reference
         clear_face_reference()
 
+        # --- DB: mark in_progress before heavy work ---
+        mark_in_progress(request_id)
+
         # --- Run the pipeline ---
         result_path = run_face_swap_pipeline(source_path, target_path, output_path)
+
+        elapsed = time.monotonic() - start_time
+        # --- DB: mark completed with elapsed time ---
+        mark_completed(request_id, elapsed)
+
+        db_record = get_request(request_id)
 
         # --- Return the result video ---
         download_name = f"swapped_REQ-{short_id}_{target_video.filename}"
@@ -436,16 +507,29 @@ async def swap_face(
             filename=download_name,
             media_type="video/mp4",
         )
-        response.headers["X-Request-ID"] = request_id
+        # Surface DB record in response headers
+        response.headers["X-Request-ID"]   = db_record["request_id"]
+        response.headers["X-Status"]        = db_record["status"]
+        response.headers["X-Time-Taken"]    = str(db_record["timestamp"]) + "s"
+        response.headers["X-Request-Type"]  = db_record["request_type"]
+        response.headers["X-Created-At"]    = db_record["created_at"]
         return response
 
     except HTTPException:
+        elapsed = time.monotonic() - start_time
+        mark_failed(request_id, elapsed)
         raise  # re-raise FastAPI exceptions as-is
     except ValueError as e:
+        elapsed = time.monotonic() - start_time
+        mark_failed(request_id, elapsed)
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
+        elapsed = time.monotonic() - start_time
+        mark_failed(request_id, elapsed)
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
+        elapsed = time.monotonic() - start_time
+        mark_failed(request_id, elapsed)
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
     finally:
         # Cleanup uploaded files (output is kept until served)
